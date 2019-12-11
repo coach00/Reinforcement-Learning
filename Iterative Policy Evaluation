@@ -1,0 +1,94 @@
+#实现David Sliver课程中的案例迭代策略评估
+#date : 2019.12.11
+
+#声明状态,共有16种状态
+state = [i for i in range(16)]
+
+#声明价值，并初始化为0
+values = [0 for _ in range(16)]
+
+#行为共有四种
+actions = ['n','e','s','w']
+
+#在16x16的方格环境中行动
+ds_actions = {'n':-4,'e':1,'s':4,'w':-1}
+
+#衰减系数
+gamma = 1.00
+
+#根据当前状态和行为确定下一状态
+def NextState(s,a):
+    next_state = s
+    if (s%4 == 0 and a == 'w') or (s < 4 and a == 'n') or \
+            ((s+1)%4 == 0 and a == 'e') or (s > 11 and a == 's'):
+        pass
+    else:
+        ds = ds_actions[a]
+        next_state = s + ds
+    return next_state
+
+#离开当前状态的即时奖励
+def RewardOf(s):
+    return 0 if s in [0,15] else -1
+
+#判断是否是终点
+def isTerminalState(s):
+    return s in [0,15]
+
+#获得每个状态能够到达的后续状态
+def getSuccessors(s):
+    successors = []
+    if isTerminalState(s):
+        return successors
+    for a in actions:
+        successors.append(NextState(s,a))
+    return successors
+
+#采用迭代法更新每个状态的价值函数
+def updateValue(s):
+    successors = getSuccessors(s)
+    new_value = 0
+    num = 4
+    reward = RewardOf(s)
+    for next_state in successors:
+        new_value += 1.00/4 * (reward + gamma * values[next_state])
+    return new_value
+
+#进行一次迭代
+def performOneiter():
+    newValues = [0 for _ in range(16)]
+    for s in state:
+        newValues[s] = updateValue(s)
+    global values
+    values = newValues
+    printValue(values)
+
+def printValue(v):
+    for i in range(16):
+        print('{0:>6.2f}'.format(v[i]),end = '')
+        if (i+1)%4 == 0:
+            print("")
+    print()
+
+def main():
+    max_iter = 160
+    cur_iter = 0
+    while cur_iter <= max_iter :
+        print('iter No.{0}'.format(cur_iter))
+        performOneiter()
+        cur_iter += 1
+    print('after {} iters,the result is:'.format(cur_iter - 1))
+    printValue(values)
+
+def test():
+    max_iter = 3
+    cur_iter = 0
+    while cur_iter <= max_iter :
+        print('iter No.{0}'.format(cur_iter))
+        performOneiter()
+        cur_iter += 1
+    print('after {} iters,the result is:'.format(cur_iter-1))
+    printValue(values)
+
+if __name__ == '__main__':
+    main()
