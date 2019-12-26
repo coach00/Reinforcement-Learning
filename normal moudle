@@ -1,0 +1,341 @@
+import numpy as np
+import pickle
+
+#刘建平博客中的例程，是一个在九宫格中下子的程序
+
+BOARD_ROWS = 3
+BOARD_COLS = 3
+BOARD_SIZE = BOARD_COLS * BOARD_ROWS
+
+class State:
+    def __init__(self):
+        """
+        棋盘大小为3x3
+        其中1代表第一个走的选手
+        -1代表后手选手的棋子
+        0表示还没有棋子
+        """
+        self.data = np.zeros((BOARD_ROWS,BOARD_COLS))
+        self.winner = None
+        self.hash_val = None
+        self.end = None
+
+        #计算一个状态的哈希值，每一个状态的哈希值应该是唯一的
+    def hash(self):
+        if self.hash_val is None:
+            self.hash_val = 0
+            for i in self.data.reshape(BOARD_SIZE):
+                if i == -1:
+                    i = 2
+                self.hash_val = self.hash_val*3 + i
+        return int(self.hash_val)
+
+    #检查有没有玩家赢了或者是个平局
+    def is_end(self):
+        if self.end is not None:
+            return self.end
+        results = []
+        #读取行
+        for i in range(0,BOARD_ROWS):
+            results.append(np.sum(self.data[i,:]))
+        #读取列
+        for i in range(0,BOARD_COLS):
+            results.append(np.sum(self.data[:,i]))
+
+        #检查对角线
+        results.append(0)
+        for i in range(0,BOARD_ROWS):
+            results[-1] += self.data[i,i]
+        results.append(0)
+        for i in range(0,BOARD_ROWS):
+            results[-1] += self.data[i,BOARD_COLS-i-1]
+
+        for result in results:
+            if result == 3:
+                self.winner = 1
+                self.end = True
+                return self.end
+            if result == -3:
+                self.winner = -1
+                self.end = True
+                return self.end
+        sum = np.sum(np.abs(self.data))
+        if sum == BOARD_SIZE:
+            self.winner = 0
+            self.end = True
+            return self.end
+
+        self.end = False
+        return self.end
+
+    #把选手的棋子放在相应的位置上
+    def next_state(self,i,j,symbol):
+        new_state = State()
+        new_state.data = np.copy(self.data)
+        new_state.data[i,j] = symbol
+        return new_state
+
+    def print(self):
+        for i in range(0,BOARD_ROWS):
+            print('---------------')
+            out = '| '
+            for j in range(0,BOARD_COLS):
+                if self.data[i,j] ==1:
+                    token = '*'
+                if self.data[i,j] == 0:
+                    token = '0'
+                if self.data[i,j] == -1:
+                    token = 'x'
+                out += token + ' | '
+            print(out)
+        print('---------------')
+
+def get_all_states_impl(current_state,current_symbol,all_states):
+    for i in range(0,BOARD_ROWS):
+        for j in range(0,BOARD_COLS):
+            if current_state.data[i][j] == 0 :
+                newState = current_state.next_state(i,j,current_symbol)
+                newHash = newState.hash()
+                if newHash not in all_states.keys():
+                    isEnd = newState.is_end()
+                    all_states[newHash] = (newState,isEnd)
+                    if not isEnd:
+                        get_all_states_impl(newState,-current_symbol,all_states)
+def get_all_states():
+    current_symbol = 1
+    current_state = State()
+    all_states = dict()
+    all_states[current_state.hash()] = (current_state,current_state.is_end())
+    get_all_states_impl(current_state,current_symbol,all_states)
+    return all_states
+
+all_sates = get_all_states()
+
+class Juger:
+    '''
+    玩家1：先下子的玩家
+    玩家2：后下子的玩家
+    反馈：如果为真，两个玩家在游戏结束时都会得到奖励
+    '''
+    def __init__(self,player1,player2):
+        self.p1 = player1
+        self.p2 = player2
+        self.current_player = None
+        self.p1_symbol = 1
+        self.p2_symbol = -1
+        self.p1.set_symbol(self.p1_symbol)
+        self.p2.set_symbol(self.p2_symbol)
+        self.current_state = State()
+
+    def reset(self):
+        self.p1.reset()
+        self.p2.reset()
+
+    def alternate(self):
+        while True:
+            yield self.p1
+            yield self.p2
+
+#if print=True,print each board during the game
+    def play(self,print=False):
+        alternator = self.alternate()
+        self.reset()
+        current_state = State()
+        self.p1.set_state(current_state)
+        self.p2.set_state(current_state)
+        while True:
+            player = next(alternator)
+            if print:
+                current_state.print()
+            [i,j,symbol] = player.act()
+            next_state_hash = current_state.next_state(i,j,symbol).hash()
+            current_state,is_end = all_sates[next_state_hash]
+            self.p1.set_state(current_state)
+            self.p2.set_state(current_state)
+            if is_end:
+                if print:
+                    current_state.print()
+                return current_state.winner
+
+#AI plyer
+class Player:
+    '''
+    step size : 更新时的步长
+    epsilon : the probability to explore
+    '''
+    def __init__(self,step_size = 0.1, epsilon = 0.1):
+        self.estimations = dict()
+        self.step_size = step_size
+        self.epsilon = epsilon
+        self.states = []
+        self.greedy = []
+
+    def reset(self):
+        self.states = []
+        self.greedy = []
+
+    def set_state(self,state):
+        self.states.append(state)
+        self.greedy.append(True)
+
+    def set_symbol(self,symbol):
+        self.symbol = symbol
+        for hash_val in all_sates.keys():
+            (state,is_end) = all_sates[hash_val]
+            if is_end:
+                if state.winner == self.symbol:
+                    self.estimations[hash_val] = 1.0
+                elif state.winner == 0:
+                    self.estimations[hash_val] = 0.5
+                else:
+                    self.estimations[hash_val] = 0
+            else:
+                self.estimations[hash_val] = 0.5
+
+    def backup(self):
+        '''
+        更新价值函数
+        :return:
+        '''
+        #for debug
+        #print ('player trajectory')
+        #for state in self.states:
+        #    state.print()
+        self.states = [state.hash() for state in self.states]
+        for i in reversed(range(len(self.states)-1)):
+            state = self.states[i]
+            td_error = self.greedy[i] * (self.estimations[self.states[i+1]]-self.estimations[state])
+            self.estimations[state] += self.step_size * td_error
+
+    def act(self):
+        state = self.states[-1]
+        next_states = []
+        next_positions = []
+        for i in range(BOARD_ROWS):
+            for j in range(BOARD_COLS):
+                if state.data[i,j] == 0:
+                    next_positions.append([i,j])
+                    next_states.append(state.next_state(i,j,self.symbol).hash())
+
+        if np.random.rand() < self.epsilon:
+            action = next_positions[np.random.randint(len(next_positions))]
+            action.append(self.symbol)
+            self.greedy[-1] = True
+            return action
+
+        values = []
+        for hash,pos in zip(next_states,next_positions):
+            values.append((self.estimations[hash],pos))
+        np.random.shuffle(values)
+        values.sort(key = lambda x :x[0],reverse=True)
+        action = values[0][1]
+        action.append(self.symbol)
+        return action
+
+    def save_policy(self):
+        with open('policy_%s.bin' % ('first' if self.symbol == 1 else 'second'),'wb') as f:
+            pickle.dump(self.estimations,f)
+
+    def load_policy(self):
+        with open('policy_%s.bin' % ('first' if self.symbol == 1 else 'second'),'rb') as f:
+            self.estimations = pickle.load(f)
+class HumanPlayer:
+    def __init__(self):
+        self.symbol = None
+        self.keys = ['q','w','e','a','s','d','z','x','c']
+        self.state = None
+        return
+
+    def reset(self):
+        return
+
+    def set_symbol(self,symbol):
+        self.symbol = symbol
+        return
+
+    def set_state(self,state):
+        self.state = state
+
+    def backup(self,_):
+        return
+
+    def act(self):
+        self.state.print()
+        key = input("Input your position")
+        data = self.keys.index(key)
+        i = data // int(BOARD_COLS)
+        j = data % BOARD_ROWS
+        return(i,j,self.symbol)
+
+def train(epochs):
+    player1 = Player(epsilon=0.01)
+    player2 = Player(epsilon=0.01)
+    juger =Juger(player1,player2)
+    player1_win = 0
+    player2_win = 0
+    for i in range(1,epochs+1):
+        winner = juger.play(print=False)
+        if winner == 1:
+            player1_win += 1
+        if winner == -1:
+            player2_win += 1
+        print('Epoch %d,player 1 win %.02f,player 2 win %.02f' %(i,player1_win / i , player2_win / i))
+        player1.backup()
+        player2.backup()
+        juger.reset()
+    player1.save_policy()
+    player2.save_policy()
+
+def compete(turns):
+    player1 = Player(epsilon=0)
+    player2 = Player(epsilon=0)
+    juger =Juger(player1,player2)
+    player1.load_policy()
+    player2.load_policy()
+    player1_win = 0
+    player2_win = 0
+    for i in range(0,turns):
+        winner = juger.play()
+        if winner == 1:
+            player1_win += 1
+        if winner == -1:
+            player2_win += 1
+        juger.reset()
+    print('%d turns,player 1 win %.02f,player 2 win %.02f' % (turns,player1_win/turns,player2_win/turns))
+
+def play():
+    '''
+    人机对战
+    :return:
+    '''
+    while True:
+        player1 = HumanPlayer()
+        player2 = Player(epsilon=0)
+        juger = Juger(player1,player2)
+        player2.load_policy()
+        winner = juger.play()
+        if winner == player2.symbol:
+            print('你连电脑都下不过！')
+        elif winner == player1.symbol:
+            print('你开挂啊！')
+        else:
+            print('人无法战胜电脑，这是个平局')
+
+
+if __name__ == '__main__':
+    train(int(1e5))
+    compete(int(1e3))
+    play()
+# | q | w | e | 
+# | a | s | d |
+# | z | x | c |
+
+
+
+
+
+
+
+
+
+
