@@ -1,0 +1,43 @@
+#该程序用监督学习的方法来训练一个CartPole的AI，没有使用强化学习的方法
+import random
+import gym
+import numpy as np
+import tensorflow as tf
+
+env = gym.make('CartPole-v0')
+
+STATE_DIM,ACTION_DIM = 4,2
+model = tf.keras.Sequential()
+model.add(tf.keras.layers.Dense(64,input_dim = STATE_DIM,activation = 'relu'))
+model.add(tf.keras.layers.Dense(20,activation='relu'))
+model.add(tf.keras.layers.Dense(ACTION_DIM,activation='linear'))
+
+#训练数据需要通过反复尝试生成
+def generate_data_one_episode():
+    x,y,score = [],[],0
+    state = env.reset()
+    while True:
+        action = random.randrange(0,2)
+        x.append(state)
+        y.append([1,0] if action == 0 else [0,1])
+        state,reward,done,_ = env.step(action)
+        score += reward
+        if done:
+            break
+    return x,y,score
+
+def generate_training_data(expect_score = 100):
+    data_X,data_Y,scores = [],[],[]
+    for i in range(10000):
+        x,y,score = generate_data_one_episode()
+        if score > expect_score:
+            data_X += x
+            data_Y += y
+            scores.append(score)
+    print('dataset size:{},max score:{}'.format(len(data_X),max(scores)))
+    return np.array(data_X),np.array(data_Y)
+
+data_X,data_Y = generate_training_data()
+model.compile(loss='mse',optimizer = 'adam')
+model.fit(data_X,data_Y,epochs = 5)
+model.save('CartPole-v0-nn.h5')
