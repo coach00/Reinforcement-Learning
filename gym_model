@@ -41,3 +41,4 @@ data_X,data_Y = generate_training_data()
 model.compile(loss='mse',optimizer = 'adam')
 model.fit(data_X,data_Y,epochs = 5)
 model.save('CartPole-v0-nn.h5')
+
