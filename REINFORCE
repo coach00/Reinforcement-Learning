@@ -1,0 +1,98 @@
+#以蒙特卡洛方式进行的policy gradient称为REINFORCE
+#环境：CartPole-v0
+#源码来自于刘建平博客策略梯度，用tensorflow2.0重写
+#注意，用稀疏交叉熵完成了对策略的梯度计算，非常巧妙
+#请使用REINFORCE_evaluate来测试效果
+
+import gym
+import tensorflow as tf
+import numpy as np
+import random
+from collections import deque
+
+GAMMA = 0.95
+LEARNING_RATE = 0.01
+
+class Policy_Gradient(object):
+    '''
+    policy gradient的agent
+    '''
+    def __init__(self,env):
+        '''
+        初始化initialize
+        :param env:
+        '''
+        self.time_step = 0
+        self.state_dim = env.observation_space.shape[0]
+        self.action_dim = env.action_space.n
+        self.ep_s,self.ep_a,self.ep_r = [],[],[]
+        self.model = self.create_policy_network()
+
+    def create_policy_network(self):
+        '''
+        构建策略网络，一层隐藏层，输出层用softmax
+        :return:
+        '''
+        model = tf.keras.Sequential()
+        model.add(tf.keras.layers.Dense(20,input_dim = self.state_dim,activation = 'relu'))
+        model.add(tf.keras.layers.Dense(self.action_dim,activation = 'softmax'))
+        model.compile(loss = 'sparse_categorical_crossentropy',optimizer = tf.keras.optimizers.Adam(LEARNING_RATE))
+        return model
+
+    def choose_action(self,s):
+        prob_weight = self.model.predict(np.array([s]))
+        action = np.random.choice(range(prob_weight.shape[1]),p=prob_weight.ravel())
+        return action
+
+    def save_model(self):
+        print('model saved')
+        self.model.save('CartPole-v0-REINFORCE.h5')
+
+    def learn(self,replay_records):
+        '''
+        计算每一状态的价值，用于给策略梯度加权
+        :return:
+        '''
+        s_batch = np.array([record[0] for record in replay_records])
+        a_batch = np.array([record[1] for record in replay_records])
+        r_batch = np.array([record[2] for record in replay_records])
+        discounted_ep_rs = np.zeros_like(r_batch)
+        running_add = 0
+        for t in reversed(range(0,len(s_batch))):
+            running_add = running_add * GAMMA + r_batch[t]
+            discounted_ep_rs[t] = running_add
+
+        discounted_ep_rs -= np.mean(discounted_ep_rs)
+        discounted_ep_rs /= np.std(discounted_ep_rs)
+
+        self.model.fit(s_batch,a_batch,sample_weight= discounted_ep_rs,verbose = 0)
+
+EPISODES = 3000
+score_list = []
+env = gym.make('CartPole-v0')
+agent = Policy_Gradient(env)
+for i in range(EPISODES):
+    s = env.reset()
+    score = 0
+    replay_records = []
+    while True:
+      a = agent.choose_action(s)
+      next_s,r,done,_  = env.step(a)
+      replay_records.append((s,a,r))
+      score += r
+      s = next_s
+      if done:
+          agent.learn(replay_records)
+          score_list.append(score)
+          print('episode:',i,'score:',score,'max:',max(score_list))
+          break
+    if np.mean(score_list[-10:]) > 195:
+        agent.save_model()
+        break
+env.close()
+
+
+
+
+
+
