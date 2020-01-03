@@ -1,0 +1,121 @@
+#2019.1.2
+#本程序来源于刘建平博客的Actor-Critic,用tensorflow2.0重写
+#环境：gym.CartPole-v0
+#价值网络：每个状态的价值
+#策略网络：softmax策略，用策略梯度更新，用每个状态的价值加权加速收敛
+
+#2019.1.3 
+#价值网络更新时用一组batch进行训练，解决收敛性太差的问题，策略网络单步更新
+#943轮后网络参数收敛
+#训练后的策略网络保存在'Actor.h5'
+#请使用evaluate.py进行验证
+
+import gym
+import tensorflow as tf
+import numpy as np
+import random
+from collections import deque
+
+#超参数
+GAMMA = 0.95
+LEARNING_RATE = 0.01
+EPSILON = 0.001
+STATE_DIM = 4
+ACTION_DIM = 2
+
+class A2Cagent():
+    '''
+    定义一个a2c agent
+    '''
+    def __init__(self):
+        self.time_step = 0
+        self.replay_size = 2000
+        self.replay_deque = deque(maxlen=self.replay_size)
+        self.state_dim = STATE_DIM
+        self.action_dim = ACTION_DIM
+        self.Q_model = self.Create_Q_network()
+        self.Policy_model = self.Create_Policy_network()
+
+    def Create_Q_network(self):
+        model = tf.keras.Sequential()
+        model.add(tf.keras.layers.Dense(128,input_dim = self.state_dim,activation = 'relu'))
+        model.add(tf.keras.layers.Dense(1,activation = 'linear'))
+        model.compile(loss = 'mean_squared_error',optimizer = tf.keras.optimizers.Adam(lr=EPSILON))
+        return model
+
+    def Create_Policy_network(self):
+        model = tf.keras.Sequential()
+        model.add(tf.keras.layers.Dense(20,input_dim = self.state_dim,activation = 'relu'))
+        model.add(tf.keras.layers.Dense(self.action_dim,activation = 'softmax'))
+        model.compile(loss = 'sparse_categorical_crossentropy',optimizer = tf.keras.optimizers.Adam(lr=LEARNING_RATE))
+        return model
+
+    def Choose_Action(self,s):
+        prob_weight = self.Policy_model.predict(np.array([s]))
+        action = np.random.choice(range(prob_weight.shape[1]),p=prob_weight.ravel())
+        return action
+
+    def Save_model(self):
+        print('model_saved')
+        self.Policy_model.save('Actor.h5')
+
+    def Remember(self,s,a,r,next_s):
+        self.replay_deque.append((s,a,r,next_s))
+
+    def Train(self,s,a,batch_size = 64):
+        '''
+        每走一步就对两个网络进行更新
+        先更新价值网络
+        再更新策略网络
+        '''
+        if len(self.replay_deque) < self.replay_size:
+            return
+        replay_batch = random.sample(self.replay_deque,batch_size)
+        s_batch = np.array([replay[0] for replay in replay_batch])
+        next_s_batch = np.array([replay[3] for replay in replay_batch])
+
+        Q = self.Q_model.predict(s_batch)
+        next_Q = self.Q_model.predict(next_s_batch)
+        for i,replay in enumerate(replay_batch):
+            _,_,r,_ = replay
+            Q[i] = r + GAMMA * next_Q[i]
+        self.Q_model.fit(s_batch,Q,verbose = 0)
+
+        s = np.array([s])
+        a = np.array([a])
+        Q_now = self.Q_model.predict(s)
+        self.Policy_model.fit(s,a,sample_weight=Q_now.ravel(),verbose = 0)
+
+
+EPISODES = 3000
+score_list = []
+env = gym.make('CartPole-v0')
+agent = A2Cagent()
+for i in range(EPISODES):
+    s = env.reset()
+    score = 0
+    while True:
+        a = agent.Choose_Action(s)
+        next_s,r,done,_ =  env.step(a)
+        agent.Remember(s,a,r,next_s)
+        agent.Train(s,a)
+        s = next_s
+        score += r
+        if done:
+            score_list.append(score)
+            print('episode:',i,'score:',score,'max:',max(score_list))
+            break
+    if np.mean(score_list[-10:]) > 195:
+        break
+agent.Save_model()
+env.close()
+
+
+
+
+
+
+
+
+
+
