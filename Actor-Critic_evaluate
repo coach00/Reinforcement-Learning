@@ -1,0 +1,21 @@
+import gym
+import tensorflow as tf
+import numpy as np
+import time
+
+model = tf.keras.models.load_model('Actor.h5')
+env = gym.make('CartPole-v0')
+
+for i in range(5):
+    s = env.reset()
+    score = 0
+    while True:
+       env.render()
+       time.sleep(0.01)
+       a = np.argmax(model.predict(np.array([s]))[0])
+       s,r,done,_ = env.step(a)
+       score += r
+       if done:
+          print('score:',score)
+          break
+env.close()
