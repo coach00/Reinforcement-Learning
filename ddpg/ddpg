@@ -1,0 +1,143 @@
+import tensorflow as tf
+from tensorflow.keras.optimizers import Adam
+import random
+import pickle
+import numpy as np
+import matplotlib.pyplot as plt
+from actor_critic import actor,critic
+from buffer import Replay_buffer
+
+class DDGP():
+    def __init__(self,
+                 env,
+                 action_bound_range=1,
+                 max_buffer_size=10000,  # 经验回放大小
+                 batch_size=64,  # 采样大小
+                 max_time_steps=1000,  # 每轮最大时长
+                 tau=0.001,  # 软更新率
+                 discount_factor=0.99,  # 奖励衰减率
+                 explore_time=1000,  # 探索时长
+                 actor_learning_rate=0.0001,  # actor学习率
+                 critic_learning_rate=0.001,  # critic学习率
+                 dtype='float32',
+                 n_episodes=1000,  # 训练轮次
+                 verbose=True,
+                 plot=False,
+                 model_save_freq=10):
+
+        # 初始化超参数
+        self.model_save_freq = model_save_freq
+        self.max_buffer_size = max_buffer_size
+        self.batch_size = batch_size
+        self.T = max_time_steps
+        self.tau = tau
+        self.gamma = discount_factor
+        self.explore_time = explore_time
+        self.actor_learning_rate = actor_learning_rate
+        self.critic_learning_rate = critic_learning_rate
+        self.dflt_dtype = dtype
+        self.n_episodes = n_episodes
+        self.action_bound_range = action_bound_range
+        self.plot = plot
+        self.verbose = verbose
+        self.actor_opt = Adam(self.actor_learning_rate)
+        self.critic_opt = Adam(self.critic_learning_rate)
+        self.r, self.l, self.qlss = [], [], []
+
+        # 初始化环境参数
+        self.env = env
+        self.observ_min = self.env.observation_space.low
+        self.observ_max = self.env.observation_space.high
+        self.state_dim = self.env.observation_space.shape[0]
+        self.action_dim = self.env.action_space.shape[0]
+
+        # 初始化经验回放合集和所有网络
+        self.buffer = Replay_buffer(self.max_buffer_size, self.batch_size)
+        self.actor = actor(self.state_dim, self.action_dim, action_bound_range).model()
+        self.critic = critic(self.state_dim, self.action_dim).model()
+        self.target_actor = actor(self.state_dim, self.action_dim, action_bound_range).model()
+        self.target_critic = critic(self.state_dim, self.action_dim).model()
+        self.target_actor.set_weights(self.actor.get_weights())
+        self.critic.compile(loss='mse', optimizers=self.critic_opt)
+        self.target_critic.set_weights(self.critic.get_weights())
+
+    def take_action(self, state, rand):
+        '''
+        选择动作，是否加上噪声
+        '''
+        act = self.actor.predict(state)[0]
+        if rand:
+            return act + random.uniform(-self.action_bound_range, self.action_bound_range)
+        else:
+            return act
+
+    def train_network(self, s_batch, a_batch, r_batch, next_s_batch, done_batch, indices=None):
+
+        # 更新critic网络，梯度下降法
+        next_actions = self.target_actor(next_s_batch)
+        td_q = self.target_critic([next_s_batch, next_actions])
+        y_i = r_batch
+        for i in range(self.batch_size):
+            if not done_batch[i]:
+                y_i[i] += td_q[i] * self.gamma
+        self.critic.train_on_batch([s_batch, a_batch], y_i)
+
+        # 更新策略网络，梯度上升法，dq_da * da_dtheta
+        with tf.GradientTape() as tape:
+            a = self.actor(s_batch)
+            tape.watch(a)
+            q = self.critic([s_batch, a])
+        dq_da = tape.gradient(q, a)
+
+        with tf.GradientTape() as tape:
+            a = self.actor(s_batch)
+            theta = self.actor.trainable_variables
+        da_dtheta = tape.gradient(a, theta, output_gradients=-dq_da)
+        self.actor_opt.apply_gradients(zip(da_dtheta, self.actor.trainable_variables))
+
+    def update_target(self, target, online):
+        init_weights = online.get_weights()
+        update_weights = target.get_weights()
+        weights = []
+        for i in tf.range(len(init_weights)):
+            weights.append(self.tau * init_weights[i] + (1 - self.tau) * update_weights[i])
+        target.set_weights(weights)
+        return target
+
+    def train(self):
+        experience_cnt = 0
+        self.ac = []
+        rand = True
+        for episode in range(self.n_episodes):
+            ri, li, qlssi = [], [], []
+            s = self.env.reset()
+            s = (s - self.observ_min) / (self.observ_max - self.observ_min)
+            for t in range(self.T):
+                a = self.take_action(np.array([s]), rand)
+                self.ac.append(a)
+                next_s, r, done, _ = self.env.step(a)
+                next_s = (next_s - self.observ_min) / (self.observ_max - self.observ_min)
+                ri.append(r)
+                self.buffer.add_experience(s, a, r, next_s, done)
+                s = next_s
+                if not rand:
+                    s_batch, a_batch, r_batch, next_s_batch, done_batch = self.buffer.sample_batch()
+                    self.train_network(s_batch, a_batch, r_batch, next_s_batch, done_batch, None)
+                    self.target_actor = self.update_target(self.target_actor, self.actor)
+                    self.target_critic = self.update_target(self.target_critic, self.critic)
+                if done or t == self.T - 1:
+                    rr = np.sum(ri)
+                    self.r.append(rr)
+                    if self.verbose: print('episode %d: Total Reward = %f' % (episode, rr))
+                    if self.plot:
+                        plt.plot(self.r)
+                        plt.pause(0.0001)
+                    break
+                if rand: experience_cnt += 1
+                if experience_cnt > self.explore_time: rand = False
+
+            if self.model_save_freq:
+                if episode % self.model_save_freq == 0:
+                    self.actor.save('actor_model.h5')
+                    with open('buffer', 'wb') as file:
+                        pickle.dump({'buffer': self.buffer}, file)
