@@ -1,0 +1,40 @@
+# 参考https://github.com/Dekki-Aero/DDPG/blob/master/DDPG-TF/ddpg/
+# DDPG中的actor和critic类
+import tensorflow as tf
+from tensorflow.keras.initializers import RandomUniform as RU
+from tensorflow.keras.layers import Dense, Input, concatenate, BatchNormalization
+from tensorflow.keras import Model
+import numpy as np
+
+
+class actor():
+    def __init__(self, state_dim, action_dim, action_bound=1):
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.action_bound = action_bound
+
+    def model(self):
+        state = Input(shape=self.state_dim, dtype='float32')
+        x = Dense(400, activation='relu',
+                  kernel_initializer=RU(-1 / np.sqrt(self.state_dim), 1 / np.sqrt(self.state_dim)))(state)
+        x = Dense(300, activation='relu', kernel_initializer=RU(-1 / np.sqrt(400.0), 1 / np.sqrt(400)))(x)
+        out = Dense(self.action_dim, activation='tanh', kernel_initializer=RU(-0.003, 0.003))(x)
+        # out = tf.multiply(out,self.action_bound)
+        return Model(inputs=state, outputs=out)
+
+
+class critic():
+    def __init__(self, state_dim, action_dim):
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+
+    def model(self):
+        state = Input(shape=self.state_dim, name='state_input', dtype='float32')
+        state_i = Dense(400, activation='relu',
+                        kernel_initializer=RU(-1 / np.sqrt(self.state_dim), 1 / np.sqrt(self.state_dim)))(state)
+        # 该神经网络待定
+        action = Input(shape=(self.action_dim,), name='action_input')
+        x = concatenate([state_i, action])
+        x = Dense(300, activation='relu', kernel_initializer=RU(-1 / np.sqrt(401), 1 / np.sqrt(401)))(x)
+        out = Dense(1, activation='linear')(x)
+        return Model(inputs=[state, action], outputs=out)
