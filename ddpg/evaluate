@@ -1,0 +1,25 @@
+import gym
+import tensorflow as tf
+import numpy as np
+import  time
+
+model = tf.keras.models.load_model('actor_model.h5')
+env = gym.make('Pendulum-v0')
+observ_min = env.observation_space.low
+observ_max = env.observation_space.high
+
+for i in range(5):
+    s = env.reset()
+    score = 0
+    while True:
+        s = (s - observ_min) / (observ_max - observ_min)
+        env.render()
+        time.sleep(0.01)
+        a = model.predict(np.array([s]))[0]
+        next_s,r,done,_ = env.step(a)
+        s = next_s
+        score += r
+        if done:
+            print('score:',score)
+            break
+env.close()
