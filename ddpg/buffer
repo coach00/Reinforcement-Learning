@@ -1,0 +1,56 @@
+from collections import deque
+import random
+import numpy as np
+
+
+class Replay_buffer:
+    def __init__(self, max_buffer_size, batch_size):
+        self.batch_size = batch_size
+        self.buffer = deque(maxlen=max_buffer_size)
+
+    def add_experience(self, s, a, r, next_s, done):
+        self.buffer.append((s, a, r, next_s, done))
+
+    def sample_batch(self):
+        replay_batch = random.sample(self.buffer, self.batch_size)
+        state_batch = np.array([replay[0] for replay in replay_batch]).astype(np.float32)
+        action_batch = np.array([replay[1] for replay in replay_batch]).astype(np.float32)
+        reward_batch = np.array([replay[2] for replay in replay_batch]).astype(np.float32)
+        next_batch = np.array([replay[3] for replay in replay_batch]).astype(np.float32)
+        done_batch = np.array([replay[4] for replay in replay_batch]).astype(bool)
+        return state_batch, action_batch, reward_batch, next_batch, done_batch
+
+# class Prioritized_experience_replay:
+#     def __init__(self,max_buffer_size,batch_size,dflt_dtype):
+#         self.batch_size = batch_size
+#         self.buffer = deque(maxlen=max_buffer_size)
+#         self.priorites = deque(maxlen=max_buffer_size)
+#         self.indexs = deque(maxlen=max_buffer_size)
+#         slef.dflt_dtype = dflt_dtype
+
+#     def add_experience(self,s,a,r,next_s,done):
+#         self.buffer.append([s,a,r,next_s,done])
+#         self.priorites.append(1)
+#         ln = len(self.buffer)
+#         if ln<self.max_buffer_size:self.indexs.append(ln)
+
+#     def update_priority(self,indices,priorities):
+#         for indx,priority in zip(indices,priorities):
+#             self.priorites[indx-1] = priority + 1
+
+#     def sample_batch(self):
+#         indices = random.choice(self.indexs,weights = self.priorites,k = self.batch_size)
+#         replay_buffer = [self.buffer[indx -1 ] for indx in indices]
+#         arr = np.array(replay_buffer)
+#         state_batch = np.vstack(arr[:0])
+#         action_batch = arr[:1].astype(self.dflt_dtype).reshape(-1,1)
+#         reward_batch = arr[:,2].astype(self.dflt_dtype).reshape(-1,1)
+#         next_batch = np.vastack(arr[:3])
+#         done_batch = np.vastack(arr[:4]).astype(bool)
+#         return state_batch,action_batch,reward_batch,next_batch,done_batch,indices
+
+
+
+
+
+
