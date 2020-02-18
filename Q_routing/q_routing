@@ -1,0 +1,204 @@
+#q_routing实现
+#参考论文：packet-routing-in-dynamically-changing-networks-a-reinforcement-learning-approach
+
+#2020.2.17
+#代码版本 1.0
+
+
+
+from queue import Queue
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+#用仿真时间来代表真实的时间，节点间的时延均为1，目前不考虑带宽和丢包率
+#节点的处理能力为每个仿真时间可以为1个数据包选择下一跳节点，这个过程认为不花费时间
+
+class Topo_env:
+    '''
+    定义环境，将所有的全局变量放在环境中执行
+    '''
+    def __init__(self,topo,time_max=16000,lamb=1):
+        self.topo = topo #整个环境的拓扑结构
+        self.packet_list = [] #存放所有正在活动的数据包 数据包类：Packet
+        self.node_list = [] #存放所有节点的实例 节点类：Node
+        self.packet_not_que = [] #存放所有未在队列中的包，未在队列的包在每个仿真时刻开始时加入队列
+        self.packet_sended = 0 #完成路由的数据包个数
+        self.total_time = 0 #完成一个包的传输时，将花费的时间累积，最终求平均值
+        self.time_step = 0 #仿真时间，整个程序遵循的统一时钟
+        self.total_hops = 0 #总跳数，用于统计
+        self.internode = 1 #节点间时延，默认均为1仿真时间
+
+        #数据包的产生遵循泊松分布
+        self.lamb = lamb #泊松分布参数，在单位时间内生成包的个数 1是中低负载，3、3.5是高负载
+        self.poisson_list = np.random.poisson(self.lamb,size=time_max) #time_max为仿真总时长
+
+    def get_new_packet(self):
+        '''
+        在每个仿真时刻产生新的数据包进入队列
+        '''
+        new_packet_num = self.poisson_list[self.time_step] #根据目前的时间生成相应数量的包
+        for i in range(new_packet_num):
+            source = np.random.randint(35)
+            end = np.random.randint(35)
+            while end == source:
+                end = np.random.randint(35)#随机生成源节点和目的节点
+            packet = Packet(source,end,self.time_step) #创建数据包
+            self.packet_list.append(packet) #放入全局队列
+            source_node = self.node_list[source] #源节点
+            source_node.que.put(packet) #将该包放入源节点的队列中
+
+    def step(self,node,Packet,a):
+        '''
+        某一节点与环境进行交互，返回和下一节点的序号和奖励值,以及是否结束,同时更新包的相关属性
+        '''
+        next_node = self.topo[node][a] #动作对应下一节点的编号
+        time_in_queue = self.time_step - Packet.time_join_queue #这个包的排队时间
+        r = time_in_queue + self.internode #奖励值
+        dst = Packet.dst
+        next_q_min = min(self.node_list[next_node].q_table[dst])
+        done = False
+        if next_node == dst: #如果下一时刻到达目标节点
+            done = True
+            self.packet_sended += 1
+            transition_time = self.time_step + self.internode - Packet.birth #这个包的传输时间
+            self.total_time += transition_time #累积时延
+            self.packet_list.remove(Packet) #这个包移出队列
+        else:
+            done = False
+            Packet.time_join_queue = self.time_step + self.internode #更新这个包进入下个节点的入队时间
+            Packet.node = next_node #这个包将在下一仿真时刻开始时加入节点的队列
+            self.packet_not_que.append(Packet)
+        return next_q_min,r,done #返回参数
+
+    def inset(self):
+        '''
+        将未在队列中的包加入队列
+        '''
+        for packet in self.packet_not_que:
+            node = packet.node
+            self.node_list[node].que.put(packet)
+            self.packet_not_que.remove(packet)
+
+
+class Packet:
+    '''
+    定义Packet类
+    初始化包时，给予参数源节点、目标节点、生成时间
+    '''
+    def __init__(self,source,end,time_step):
+        self.source = source #源节点
+        self.node = source #该包应该在哪个节点（用于入队操作）
+        self.dst = end #目标节点
+        self.birth = time_step #生成时间
+        self.time_join_queue = time_step #初始的入队时间
+
+
+class Node:
+    '''
+    定义Node类
+    初始化Node时，给予参数每个节点连接的节点编号
+    '''
+    def __init__(self,neibor,greedy = 0.1,lr = 0.6,factor = 0.95):
+        self.neibor = neibor #邻居节点
+        self.action_num = len(neibor) #可选动作的数量
+        self.que = Queue() #初始化包队列
+        self.q_table = [[0]*self.action_num for _ in range(36)] #初始化q表
+        self.greedy = greedy #贪心率
+        self.lr = lr #q_learning学习率
+        self.factor = factor #衰减系数
+
+    def choose_action(self,dst):
+        '''
+        根据包的目标节点选择动作，采用greedy策略
+        '''
+        if np.random.random() < self.greedy:
+            a = np.random.choice(range(self.action_num))
+        else:
+            a = np.argmin(self.q_table[dst])
+        return a
+
+    def update(self,dst,a,next_q_min,r,done):
+        '''
+        与环境完成交互后更新q表
+        '''
+        if done:#如果下一节点是目的节点
+            self.q_table[dst][a] = (1 - self.lr) * self.q_table[dst][a] + self.lr * r
+        else :
+            self.q_table[dst][a] = (1 - self.lr) * self.q_table[dst][a] + self.lr * (r + self.factor * next_q_min)
+
+
+# if __name__ == '__main__':
+#     '''
+#     测试各类是否正常生成
+#     '''
+#     env = Topo_env(topo)
+#     print(len(env.poisson_list))
+#     packet = Packet(0,5,0)
+#     print(packet.birth)
+#     node1 = Node(topo[0])
+#     node2 = Node(topo[1])
+#     env.node_list.append(node1)
+#     env.node_list.append(node2)
+#     node1.que.put(packet)
+#     packet = node1.que.get()
+#     a = 0
+#     env.step(0,packet,a)
+#     print(env.packet_not_que[0].node)
+
+#主函数部分
+#超参数
+TIME_MAX = 160000 #仿真时长
+LAMB = 1 #泊松分布参数
+LR = 0.6 #节点学习率
+FACTOR = 0.95 #奖励衰减参数
+GREEDY = 0.1 #探索率
+
+TOPO = [[1,6],[0,2,7],[1,8],[4,9],[3,5,10],[4,11],[0,7,12],[1,6,8,13],[2,7,14],[3,10,15],[4,9,11,16],[5,10,17],[6,13,18],[7,12,14,19],[8,13,20],[9,16,21],[10,15,17,22],[11,16,23],[12,19,24],[13,18,20,25],[14,19,21,26],[15,20,22,27],[16,21,23,28],[17,22,29],[18,30],[19,26],[20,25],[21,28],[22,27],[23,35],[24,31],[30,32],[31,33],[32,34],[33,35],[29,34]]
+#每个节点用0~35的编号来表示，每个节点可连接的节点保存在列表中
+avg_list = [] #用于记录平均时延的列表
+
+env = Topo_env(TOPO,TIME_MAX,LAMB) #创建环境实例
+for i in range(len(TOPO)):
+    node = Node(TOPO[i],GREEDY,LR,FACTOR) #创建节点实例
+    env.node_list.append(node)  #添加到node_list中
+while env.time_step < TIME_MAX:
+    time_step = env.time_step #把这个属性取出来，没必要每次都读取
+    print('仿真时间:{}'.format(time_step),'网络中数据包个数:{}'.format(len(env.packet_list)))
+    if env.packet_not_que: #如果有包未在队列中，则加入队列
+        env.inset()
+    env.get_new_packet() #产生新的数据包并进入队列
+    for i in range(36): #遍历所有节点，对队列中的数据包进行转发操作
+        node = env.node_list[i] #读取节点
+        if not node.que.empty():#如果队列中有包存在
+            packet = node.que.get() #取出队列首的数据包
+            dst = packet.dst #取出该数据包的目标节点
+            a = node.choose_action(dst) #选择动作
+            next_q_min,r,done = env.step(i,packet,a) #与环境交互
+            node.update(dst,a,next_q_min,r,done) #更新q表
+    if time_step % 200 == 0: #每200仿真时间统计一次时延
+        if env.packet_sended:
+            avg_time_delay = env.total_time / env.packet_sended
+            avg_list.append(avg_time_delay)
+    env.time_step += 1
+
+plt.plot(range(len(avg_list)),avg_list)
+plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
